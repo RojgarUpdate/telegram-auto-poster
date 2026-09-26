@@ -2,7 +2,7 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -22,9 +22,6 @@ def save_posted_url(url):
         f.write(f"{url}\n")
 
 def get_official_or_fallback_link_and_img(page_url):
-    """
-    Detail page se official link aur post ka original banner image extract karta hai.
-    """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     official_link = None
     img_url = None
@@ -33,16 +30,18 @@ def get_official_or_fallback_link_and_img(page_url):
         resp = requests.get(page_url, headers=headers, timeout=8)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 1. Post Banner Image URL
-        img_tag = soup.find('img', src=re.compile(r'uploads|post|job', re.I)) or soup.find('img')
-        if img_tag and img_tag.get('src'):
-            src = img_tag['src'].strip()
-            if not src.startswith("http"):
-                img_url = "https://www.fastjobsearchers.com/" + src.lstrip("/")
-            else:
-                img_url = src
+        # Image extract karna (sabse pehle content area se)
+        content_div = soup.find('div', class_=re.compile(r'entry-content|post-body|content', re.I)) or soup
+        for img in content_div.find_all('img'):
+            src = img.get('src', '').strip()
+            if src and not any(x in src.lower() for x in ['logo', 'icon', 'banner-ad', 'widgets']):
+                if not src.startswith("http"):
+                    img_url = "https://www.fastjobsearchers.com/" + src.lstrip("/")
+                else:
+                    img_url = src
+                break
 
-        # 2. Official Link Extraction
+        # Official Apply / Notification link extraction
         for a in soup.find_all('a', href=True):
             href = a['href'].strip()
             link_text = a.text.lower()
@@ -66,10 +65,42 @@ def get_official_or_fallback_link_and_img(page_url):
 
     return official_link, img_url
 
-def process_banner_with_watermark(img_url):
-    """
-    Website se banner download karta hai aur top corner me logo.png / QR stamp karta hai.
-    """
+def create_fallback_text_banner(title):
+    width, height = 1280, 720
+    template_path = "job_template.png"
+    logo_path = "logo.png"
+    
+    if os.path.exists(template_path):
+        img = Image.open(template_path).convert("RGB").resize((width, height))
+    else:
+        img = Image.new("RGB", (width, height), color="#092B5A")
+        
+    draw = ImageDraw.Draw(img)
+    
+    try:
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+    except:
+        font_title = ImageFont.load_default()
+
+    display_title = title[:45] + "..." if len(title) > 45 else title
+    
+    # Title ko Image ke upar render karo agar original image missing ho
+    draw.text((100, 250), "JOB UPDATE", fill="#FFCC00", font=font_title)
+    draw.text((100, 320), display_title.upper(), fill="#FFFFFF", font=font_title)
+
+    if os.path.exists(logo_path):
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+            logo.thumbnail((150, 150))
+            img.paste(logo, (width - 170, 20), logo)
+        except Exception as e:
+            print(f"Logo error: {e}")
+
+    output_path = "final_banner.png"
+    img.save(output_path)
+    return output_path
+
+def process_banner_with_watermark(img_url, title):
     output_path = "final_banner.png"
     logo_path = "logo.png"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -77,26 +108,25 @@ def process_banner_with_watermark(img_url):
     try:
         if img_url:
             resp = requests.get(img_url, headers=headers, timeout=8)
-            img = Image.open(BytesIO(resp.content)).convert("RGBA")
-        else:
-            # Fallback blank canvas if no image found on post
-            img = Image.new("RGBA", (1280, 720), color="#092B5A")
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                img = Image.open(BytesIO(resp.content)).convert("RGBA")
+                
+                # Watermark add karna
+                if os.path.exists(logo_path):
+                    logo = Image.open(logo_path).convert("RGBA")
+                    logo.thumbnail((int(img.width * 0.20), int(img.height * 0.20)))
+                    position = (img.width - logo.width - 20, 20)
+                    img.paste(logo, position, logo)
 
-        # Overlay Logo / QR Code
-        if os.path.exists(logo_path):
-            logo = Image.open(logo_path).convert("RGBA")
-            # Logo/QR size proportional to image
-            logo.thumbnail((int(img.width * 0.20), int(img.height * 0.20)))
-            # Paste on top-right corner
-            position = (img.width - logo.width - 20, 20)
-            img.paste(logo, position, logo)
+                img.convert("RGB").save(output_path)
+                return output_path
 
-        img.convert("RGB").save(output_path)
-        return output_path
+        # Image na milne par text-banner fallback
+        return create_fallback_text_banner(title)
 
     except Exception as e:
         print(f"Image processing error: {e}")
-        return None
+        return create_fallback_text_banner(title)
 
 def send_telegram_photo(image_path, title, final_link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -119,19 +149,17 @@ def send_telegram_photo(image_path, title, final_link):
                 "parse_mode": "HTML"
             }, files={"photo": photo})
             print(f"Photo Post Status Code: {resp.status_code}")
-    else:
-        # Fallback to Text if image failed
-        url_msg = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url_msg, data={
-            "chat_id": CHANNEL_ID,
-            "text": caption_text,
-            "parse_mode": "HTML"
-        })
 
 def scrape_and_post():
     url = "https://www.fastjobsearchers.com/"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     posted_urls = load_posted_urls()
+    
+    # Generic category names jinhe title nahi banana hai
+    ignored_titles = [
+        "home", "current job", "latest job", "result", "admit card", 
+        "answer key", "syllabus", "view all", "contact us", "privacy policy"
+    ]
     
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -143,28 +171,27 @@ def scrape_and_post():
             raw_title = a.text.strip()
             job_page_link = a['href'].strip()
 
-            if len(raw_title) > 8 and ("fastjobsearchers.com" in job_page_link or job_page_link.startswith("/") or ".php" in job_page_link):
+            if len(raw_title) > 10 and ("fastjobsearchers.com" in job_page_link or job_page_link.startswith("/") or ".php" in job_page_link):
                 if not job_page_link.startswith("http"):
                     job_page_link = "https://www.fastjobsearchers.com/" + job_page_link.lstrip("/")
                 
-                # Check for Duplicate
-                if job_page_link in posted_urls:
+                # Title clean karna
+                clean_title = re.sub(r'(?i)fast\s*job\s*searchers|fastjobsearchers|\.com', '', raw_title).strip()
+                
+                # Category titles ignore karo
+                if not clean_title or clean_title.lower() in ignored_titles:
                     continue
 
-                title = re.sub(r'(?i)fast\s*job\s*searchers|fastjobsearchers|\.com', '', raw_title).strip()
-                if not title or title.lower() in ["home", "contact us", "about us", "privacy policy"]:
+                # Check Duplicate
+                if job_page_link in posted_urls:
                     continue
                 
-                print(f"Processing Post: {title}")
+                print(f"Processing Post: {clean_title}")
                 final_link, img_url = get_official_or_fallback_link_and_img(job_page_link)
                 
-                # Download original banner & stamp logo/QR
-                banner_file = process_banner_with_watermark(img_url)
+                banner_file = process_banner_with_watermark(img_url, clean_title)
+                send_telegram_photo(banner_file, clean_title, final_link)
                 
-                # Post to Telegram
-                send_telegram_photo(banner_file, title, final_link)
-                
-                # Save URL
                 save_posted_url(job_page_link)
                 break
 
