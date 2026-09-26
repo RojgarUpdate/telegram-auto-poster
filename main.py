@@ -33,33 +33,42 @@ def get_official_or_fallback_link(page_url):
 def create_branded_banner(title):
     width, height = 1280, 720
     
-    # Load template image
-    if os.path.exists("job_template.png"):
-        img = Image.open("job_template.png").convert("RGB").resize((width, height))
+    # Check for template file in current directory
+    template_path = "job_template.png"
+    if os.path.exists(template_path):
+        img = Image.open(template_path).convert("RGB").resize((width, height))
     else:
+        # Emergency backup layout if template is missing
         img = Image.new("RGB", (width, height), color="#092B5A")
         
     draw = ImageDraw.Draw(img)
     
-    # Fonts
+    # Load fonts
     try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
+        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
     except:
         font_title = font_body = ImageFont.load_default()
 
-    # Title Alignment (Top Right Header)
+    # Format Title
     display_title = title[:40] + "..." if len(title) > 40 else title
-    draw.text((450, 48), display_title.upper(), fill="#092B5A", font=font_title)
     
-    # Template Boxes Text Placement (X, Y Coordinates)
-    draw.text((560, 205), "LATEST VACANCY", fill="#092B5A", font=font_body)
-    draw.text((560, 260), "CHECK NOTIFICATION", fill="#092B5A", font=font_body)
-    
-    draw.text((540, 415), "VARIOUS POSTS", fill="#092B5A", font=font_body)
-    draw.text((540, 495), "UPDATED TODAY", fill="#092B5A", font=font_body)
-    draw.text((540, 575), "CHECK DETAILS BELOW", fill="#092B5A", font=font_body)
-    draw.text((540, 655), "OFFICIAL WEBSITE", fill="#092B5A", font=font_body)
+    if os.path.exists(template_path):
+        # Draw inside template boxes
+        draw.text((450, 48), display_title.upper(), fill="#092B5A", font=font_title)
+        draw.text((560, 205), "JOB UPDATE", fill="#092B5A", font=font_body)
+        draw.text((560, 260), "CHECK DETAILS", fill="#092B5A", font=font_body)
+        draw.text((540, 415), "VARIOUS POSTS", fill="#092B5A", font=font_body)
+        draw.text((540, 495), "UPDATED TODAY", fill="#092B5A", font=font_body)
+        draw.text((540, 575), "CHECK LINK BELOW", fill="#092B5A", font=font_body)
+        draw.text((540, 655), "OFFICIAL WEBSITE", fill="#092B5A", font=font_body)
+    else:
+        # Fallback text so background is never empty
+        draw.text((100, 100), "ROJGAR UPDATE", fill="#FFCC00", font=font_title)
+        draw.text((100, 200), display_title.upper(), fill="#FFFFFF", font=font_title)
+        draw.text((100, 350), "NEW JOB VACANCY 2026", fill="#FFFFFF", font=font_body)
+        draw.text((100, 420), "APPLY ONLINE / FULL DETAILS", fill="#FFFFFF", font=font_body)
+        draw.text((100, 500), "CHECK LINK IN CAPTION", fill="#FFCC00", font=font_body)
 
     output_path = "final_post.png"
     img.save(output_path)
@@ -90,6 +99,12 @@ def scrape_and_post():
     url = "https://www.resultbharat.com/"
     headers = {"User-Agent": "Mozilla/5.0"}
     
+    # Generic titles to skip
+    ignore_keywords = [
+        "top online form", "latest job", "result", "admit card", 
+        "answer key", "syllabus", "view all", "index.html"
+    ]
+    
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -98,12 +113,13 @@ def scrape_and_post():
             raw_title = a.text.strip()
             rb_page_link = a['href'].strip()
             
+            # Skip combined category titles
+            if any(kw in raw_title.lower() for kw in ignore_keywords):
+                continue
+
             if len(raw_title) > 12 and (".html" in rb_page_link or "pdf" in rb_page_link.lower()):
                 if not rb_page_link.startswith("http"):
                     rb_page_link = "https://www.resultbharat.com/" + rb_page_link
-                
-                if "resultbharat.com/index" in rb_page_link or rb_page_link == "https://www.resultbharat.com/":
-                    continue
                 
                 title = re.sub(r'(?i)result\s*bharat|main site|\.com', '', raw_title).strip()
                 if not title:
