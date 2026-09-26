@@ -26,11 +26,3 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python main.py
-      - name: Save State
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          touch posted.txt
-          git add posted.txt
-          git commit -m "Update posted links" || exit 0
-          git push
