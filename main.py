@@ -1,39 +1,49 @@
 import os
 import requests
 from bs4 import BeautifulSoup
+from PIL import Image, ImageDraw
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-def send_telegram_message(title, link):
+def create_job_banner(title, post_url):
+    try:
+        template = Image.open("job_template.png")
+        draw = ImageDraw.Draw(template)
+        
+        # Title text overlay on template
+        draw.text((360, 80), title[:45], fill="#0A192F")
+        
+        output_path = "final_banner.png"
+        template.save(output_path)
+        send_telegram_photo(output_path, title, post_url)
+    except Exception as e:
+        print(f"Error creating banner: {e}")
+
+def send_telegram_photo(image_path, caption, link):
     if not BOT_TOKEN or not CHANNEL_ID:
-        print("Error: BOT_TOKEN or CHANNEL_ID missing in repository secrets!")
+        print("Secrets missing!")
         return
         
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    text = f"📢 <b>{title}</b>\n\n🔗 <a href='{link}'>Click Here for Details</a>"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    caption_text = f"📢 <b>{caption}</b>\n\n🔗 <a href='{link}'>Click Here for Details</a>"
     
-    payload = {
-        "chat_id": CHANNEL_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    
-    resp = requests.post(url, json=payload)
-    print("Telegram Response Status:", resp.status_code)
-    print("Telegram Response Text:", resp.text)
+    with open(image_path, 'rb') as photo:
+        requests.post(url, data={
+            "chat_id": CHANNEL_ID,
+            "caption": caption_text,
+            "parse_mode": "HTML"
+        }, files={"photo": photo})
 
 def scrape_and_post():
     url = "https://www.resultbharat.com/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # Latest job link dhoondho
-        links = soup.find_all('a', href=True)
-        for a in links:
+        for a in soup.find_all('a', href=True):
             title = a.text.strip()
             link = a['href']
             
@@ -41,10 +51,8 @@ def scrape_and_post():
                 if not link.startswith("http"):
                     link = "https://www.resultbharat.com/" + link
                 
-                print(f"Sending Post: {title} -> {link}")
-                send_telegram_message(title, link)
+                create_job_banner(title, link)
                 break
-                
     except Exception as e:
         print(f"Scraper error: {e}")
 
