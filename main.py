@@ -9,7 +9,11 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VaBLUVk7oQhljhq68b1T"
 
 def get_official_or_fallback_link(page_url):
-    headers = {"User-Agent": "Mozilla/5.0"}
+    """
+    Detail page se official/government link dhoondhta hai.
+    Agar na mile toh Result Bharat ka link dene ke bajaye WhatsApp link deta hai.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         resp = requests.get(page_url, headers=headers, timeout=8)
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -19,15 +23,18 @@ def get_official_or_fallback_link(page_url):
             link_text = a.text.lower()
             if "resultbharat" not in href and href.startswith("http"):
                 if any(kw in link_text for kw in ["apply", "official", "registration", "online", "click here", "notification"]):
+                    print(f"Found official link: {href}")
                     return href
                     
         for a in soup.find_all('a', href=True):
             href = a['href'].strip()
             if href.startswith("http") and "resultbharat" not in href:
+                print(f"Found external link: {href}")
                 return href
     except Exception as e:
         print(f"Link extraction error: {e}")
         
+    print("No official link found. Falling back to WhatsApp Link.")
     return WHATSAPP_LINK
 
 def create_branded_banner(title):
@@ -68,7 +75,7 @@ def create_branded_banner(title):
     img.save(output_path)
     return output_path
 
-# 1. Single Specific Job Post (Banner Photo + Text Caption)
+# 1. Single Job Post - Photo Banner ke saath
 def send_telegram_photo(image_path, title, final_link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     caption_text = (
@@ -88,9 +95,9 @@ def send_telegram_photo(image_path, title, final_link):
             "caption": caption_text,
             "parse_mode": "HTML"
         }, files={"photo": photo})
-        print(f"Telegram Photo Status: {resp.status_code}")
+        print(f"Telegram Photo Response Status Code: {resp.status_code}")
 
-# 2. Combined/Generic Post (ONLY Text Message, NO Banner Image)
+# 2. Combined / Generic Post - Text Only (NO BANNER)
 def send_telegram_message(title, final_link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     text_content = (
@@ -109,13 +116,13 @@ def send_telegram_message(title, final_link):
         "text": text_content,
         "parse_mode": "HTML"
     })
-    print(f"Telegram Text Status: {resp.status_code}")
+    print(f"Telegram Text Response Status Code: {resp.status_code}")
 
 def scrape_and_post():
     url = "https://www.resultbharat.com/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # Generic keywords jin par Banner HATA DEGA
+    # Generic titles jinke liye Banner NAHI jayega
     combined_keywords = [
         "top online form", "latest job", "result", "admit card", 
         "answer key", "syllabus", "view all", "index.html", "age calculator"
@@ -129,7 +136,7 @@ def scrape_and_post():
             raw_title = a.text.strip()
             rb_page_link = a['href'].strip()
 
-            if len(raw_title) > 8 and (".html" in rb_page_link or "pdf" in rb_page_link.lower()):
+            if len(raw_title) > 5 and (".html" in rb_page_link or "pdf" in rb_page_link.lower() or "http" in rb_page_link):
                 if not rb_page_link.startswith("http"):
                     rb_page_link = "https://www.resultbharat.com/" + rb_page_link
                 
@@ -137,20 +144,21 @@ def scrape_and_post():
                 if not title:
                     continue
                 
+                print(f"Targeting Post: {title}")
                 final_link = get_official_or_fallback_link(rb_page_link)
                 
-                # Combined Keyword Check
                 is_combined = any(kw in raw_title.lower() for kw in combined_keywords)
                 
                 if is_combined:
-                    # Combined post par Banner bilkul nahi jayega (Text Only)
+                    print("Generic/Combined Notice detected -> Sending Text Only (No Banner)...")
                     send_telegram_message(title, final_link)
                 else:
-                    # Single Job post par Banner Image + Text jayega
+                    print("Single Job Notice detected -> Sending Banner Photo...")
                     banner_file = create_branded_banner(title)
                     send_telegram_photo(banner_file, title, final_link)
-                break
                 
+                break
+
     except Exception as e:
         print(f"Scraper error: {e}")
 
