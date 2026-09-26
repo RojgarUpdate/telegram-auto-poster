@@ -2,80 +2,102 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VaBLUVk7oQhljhq68b1T"
 
-def get_official_or_fallback_link(page_url):
+HISTORY_FILE = "posted_urls.txt"
+
+def load_posted_urls():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
+
+def save_posted_url(url):
+    with open(HISTORY_FILE, "a") as f:
+        f.write(f"{url}\n")
+
+def get_official_or_fallback_link_and_img(page_url):
     """
-    Detail page se official/government link dhoondhta hai.
-    Agar na mile toh Result Bharat ka link dene ke bajaye WhatsApp link deta hai.
+    Detail page se official link aur post ka original banner image extract karta hai.
     """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    official_link = None
+    img_url = None
+    
     try:
         resp = requests.get(page_url, headers=headers, timeout=8)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
+        # 1. Post Banner Image URL
+        img_tag = soup.find('img', src=re.compile(r'uploads|post|job', re.I)) or soup.find('img')
+        if img_tag and img_tag.get('src'):
+            src = img_tag['src'].strip()
+            if not src.startswith("http"):
+                img_url = "https://www.fastjobsearchers.com/" + src.lstrip("/")
+            else:
+                img_url = src
+
+        # 2. Official Link Extraction
         for a in soup.find_all('a', href=True):
             href = a['href'].strip()
             link_text = a.text.lower()
-            if "resultbharat" not in href and href.startswith("http"):
-                if any(kw in link_text for kw in ["apply", "official", "registration", "online", "click here", "notification"]):
-                    print(f"Found official link: {href}")
-                    return href
+            if "fastjobsearchers" not in href and href.startswith("http"):
+                if any(kw in link_text for kw in ["apply", "official", "registration", "online", "click here", "notification", "download"]):
+                    official_link = href
+                    break
                     
-        for a in soup.find_all('a', href=True):
-            href = a['href'].strip()
-            if href.startswith("http") and "resultbharat" not in href:
-                print(f"Found external link: {href}")
-                return href
+        if not official_link:
+            for a in soup.find_all('a', href=True):
+                href = a['href'].strip()
+                if href.startswith("http") and "fastjobsearchers" not in href:
+                    official_link = href
+                    break
+
     except Exception as e:
-        print(f"Link extraction error: {e}")
+        print(f"Extraction error: {e}")
         
-    print("No official link found. Falling back to WhatsApp Link.")
-    return WHATSAPP_LINK
+    if not official_link:
+        official_link = WHATSAPP_LINK
 
-def create_branded_banner(title):
-    width, height = 1280, 720
-    template_path = "job_template.png"
-    
-    if os.path.exists(template_path):
-        img = Image.open(template_path).convert("RGB").resize((width, height))
-    else:
-        img = Image.new("RGB", (width, height), color="#092B5A")
-        
-    draw = ImageDraw.Draw(img)
-    
+    return official_link, img_url
+
+def process_banner_with_watermark(img_url):
+    """
+    Website se banner download karta hai aur top corner me logo.png / QR stamp karta hai.
+    """
+    output_path = "final_banner.png"
+    logo_path = "logo.png"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
     try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
-    except:
-        font_title = font_body = ImageFont.load_default()
+        if img_url:
+            resp = requests.get(img_url, headers=headers, timeout=8)
+            img = Image.open(BytesIO(resp.content)).convert("RGBA")
+        else:
+            # Fallback blank canvas if no image found on post
+            img = Image.new("RGBA", (1280, 720), color="#092B5A")
 
-    display_title = title[:40] + "..." if len(title) > 40 else title
-    
-    if os.path.exists(template_path):
-        draw.text((450, 48), display_title.upper(), fill="#092B5A", font=font_title)
-        draw.text((560, 205), "JOB UPDATE", fill="#092B5A", font=font_body)
-        draw.text((560, 260), "CHECK DETAILS", fill="#092B5A", font=font_body)
-        draw.text((540, 415), "VARIOUS POSTS", fill="#092B5A", font=font_body)
-        draw.text((540, 495), "UPDATED TODAY", fill="#092B5A", font=font_body)
-        draw.text((540, 575), "CHECK LINK BELOW", fill="#092B5A", font=font_body)
-        draw.text((540, 655), "OFFICIAL WEBSITE", fill="#092B5A", font=font_body)
-    else:
-        draw.text((100, 100), "ROJGAR UPDATE", fill="#FFCC00", font=font_title)
-        draw.text((100, 200), display_title.upper(), fill="#FFFFFF", font=font_title)
-        draw.text((100, 350), "NEW JOB VACANCY", fill="#FFFFFF", font=font_body)
-        draw.text((100, 420), "APPLY ONLINE / FULL DETAILS", fill="#FFFFFF", font=font_body)
-        draw.text((100, 500), "CHECK LINK IN CAPTION", fill="#FFCC00", font=font_body)
+        # Overlay Logo / QR Code
+        if os.path.exists(logo_path):
+            logo = Image.open(logo_path).convert("RGBA")
+            # Logo/QR size proportional to image
+            logo.thumbnail((int(img.width * 0.20), int(img.height * 0.20)))
+            # Paste on top-right corner
+            position = (img.width - logo.width - 20, 20)
+            img.paste(logo, position, logo)
 
-    output_path = "final_post.png"
-    img.save(output_path)
-    return output_path
+        img.convert("RGB").save(output_path)
+        return output_path
 
-# 1. Single Job Post - Photo Banner ke saath
+    except Exception as e:
+        print(f"Image processing error: {e}")
+        return None
+
 def send_telegram_photo(image_path, title, final_link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     caption_text = (
@@ -89,74 +111,61 @@ def send_telegram_photo(image_path, title, final_link):
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     
-    with open(image_path, 'rb') as photo:
-        resp = requests.post(url, data={
+    if image_path and os.path.exists(image_path):
+        with open(image_path, 'rb') as photo:
+            resp = requests.post(url, data={
+                "chat_id": CHANNEL_ID,
+                "caption": caption_text,
+                "parse_mode": "HTML"
+            }, files={"photo": photo})
+            print(f"Photo Post Status Code: {resp.status_code}")
+    else:
+        # Fallback to Text if image failed
+        url_msg = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url_msg, data={
             "chat_id": CHANNEL_ID,
-            "caption": caption_text,
+            "text": caption_text,
             "parse_mode": "HTML"
-        }, files={"photo": photo})
-        print(f"Telegram Photo Response Status Code: {resp.status_code}")
-
-# 2. Combined / Generic Post - Text Only (NO BANNER)
-def send_telegram_message(title, final_link):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    text_content = (
-        f"🚨 <b>{title}</b>\n\n"
-        f"📌 <b>Telegram:</b> @officialrojgarupdate\n\n"
-        f"📲 <b>Official Notification & Apply Link:</b> 👇\n"
-        f"🔗 <a href='{final_link}'>Click Here To Apply / Details</a>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💚 <b>Join Our WhatsApp Channel for Daily Updates:</b>\n"
-        f"👉 <a href='{WHATSAPP_LINK}'>Click Here to Join WhatsApp Channel</a>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
-    )
-    
-    resp = requests.post(url, data={
-        "chat_id": CHANNEL_ID,
-        "text": text_content,
-        "parse_mode": "HTML"
-    })
-    print(f"Telegram Text Response Status Code: {resp.status_code}")
+        })
 
 def scrape_and_post():
-    url = "https://www.resultbharat.com/"
+    url = "https://www.fastjobsearchers.com/"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
-    # Generic titles jinke liye Banner NAHI jayega
-    combined_keywords = [
-        "top online form", "latest job", "result", "admit card", 
-        "answer key", "syllabus", "view all", "index.html", "age calculator"
-    ]
+    posted_urls = load_posted_urls()
     
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        for a in soup.find_all('a', href=True):
+        all_links = soup.find_all('a', href=True)
+        
+        for a in all_links:
             raw_title = a.text.strip()
-            rb_page_link = a['href'].strip()
+            job_page_link = a['href'].strip()
 
-            if len(raw_title) > 5 and (".html" in rb_page_link or "pdf" in rb_page_link.lower() or "http" in rb_page_link):
-                if not rb_page_link.startswith("http"):
-                    rb_page_link = "https://www.resultbharat.com/" + rb_page_link
+            if len(raw_title) > 8 and ("fastjobsearchers.com" in job_page_link or job_page_link.startswith("/") or ".php" in job_page_link):
+                if not job_page_link.startswith("http"):
+                    job_page_link = "https://www.fastjobsearchers.com/" + job_page_link.lstrip("/")
                 
-                title = re.sub(r'(?i)result\s*bharat|main site|\.com', '', raw_title).strip()
-                if not title:
+                # Check for Duplicate
+                if job_page_link in posted_urls:
+                    continue
+
+                title = re.sub(r'(?i)fast\s*job\s*searchers|fastjobsearchers|\.com', '', raw_title).strip()
+                if not title or title.lower() in ["home", "contact us", "about us", "privacy policy"]:
                     continue
                 
-                print(f"Targeting Post: {title}")
-                final_link = get_official_or_fallback_link(rb_page_link)
+                print(f"Processing Post: {title}")
+                final_link, img_url = get_official_or_fallback_link_and_img(job_page_link)
                 
-                is_combined = any(kw in raw_title.lower() for kw in combined_keywords)
+                # Download original banner & stamp logo/QR
+                banner_file = process_banner_with_watermark(img_url)
                 
-                if is_combined:
-                    print("Generic/Combined Notice detected -> Sending Text Only (No Banner)...")
-                    send_telegram_message(title, final_link)
-                else:
-                    print("Single Job Notice detected -> Sending Banner Photo...")
-                    banner_file = create_branded_banner(title)
-                    send_telegram_photo(banner_file, title, final_link)
+                # Post to Telegram
+                send_telegram_photo(banner_file, title, final_link)
                 
+                # Save URL
+                save_posted_url(job_page_link)
                 break
 
     except Exception as e:
