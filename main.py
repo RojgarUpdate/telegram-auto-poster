@@ -7,6 +7,7 @@ from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+TELEGRAM_USERNAME = "@rojgar_update_official"
 WHATSAPP_LINK = "https://whatsapp.com/channel/0029VaBLUVk7oQhljhq68b1T"
 
 HISTORY_FILE = "posted_urls.txt"
@@ -21,16 +22,13 @@ def save_posted_url(url):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{url}\n")
 
-def get_job_full_details(page_url):
-    """
-    Extracts official link, original image, dates, fee, and vacancy info.
-    """
+def get_clean_job_details(page_url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     official_link = None
     img_url = None
     details = {
-        "dates": "Check Notification",
-        "fee": "Check Notification",
+        "dates": "Check Official Notice",
+        "fee": "Check Official Notice",
         "vacancy": "Various Posts"
     }
     
@@ -38,7 +36,7 @@ def get_job_full_details(page_url):
         resp = requests.get(page_url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 1. Original Banner Extraction
+        # 1. Extract Original Banner Image
         for img in soup.find_all('img'):
             src = img.get('src', '').strip()
             if src and any(k in src.lower() for k in ['uploads', 'post', 'job', 'banner', 'wp-content']):
@@ -46,52 +44,45 @@ def get_job_full_details(page_url):
                     img_url = src if src.startswith("http") else "https://www.fastjobsearchers.com/" + src.lstrip("/")
                     break
 
-        # 2. Extract Dates, Fee, Vacancy Details from page text
+        # 2. Extract Important Text Details
         page_text = soup.get_text()
         
-        # Extract Vacancy / Total Posts
         vacancy_match = re.search(r'(?:total\s*post|total\s*vacancy|vacancies|posts?)\s*[:\-]\s*([\w\d\s+]+)', page_text, re.IGNORECASE)
         if vacancy_match:
             details["vacancy"] = vacancy_match.group(1).strip()[:30]
 
-        # Extract Application Fee
         fee_match = re.search(r'(?:application\s*fee|fee)\s*[:\-]\s*([^\n]+)', page_text, re.IGNORECASE)
         if fee_match:
             details["fee"] = fee_match.group(1).strip()[:40]
 
-        # Extract Dates
         date_match = re.search(r'(?:apply\s*date|important\s*dates?|last\s*date)\s*[:\-]\s*([^\n]+)', page_text, re.IGNORECASE)
         if date_match:
             details["dates"] = date_match.group(1).strip()[:50]
 
-        # 3. Direct Official Apply / Notification Link Extraction
+        # 3. Block Third-Party Links & Get Official Govt Link Only
         for a in soup.find_all('a', href=True):
             href = a['href'].strip()
             link_text = a.text.lower()
-            if "fastjobsearchers" not in href and href.startswith("http"):
+            
+            # Fastjobsearchers ke internal aur Telegram links ko block karein
+            if "t.me" in href or "telegram" in href or "fastjobsearchers" in href:
+                continue
+                
+            if href.startswith("http"):
                 if any(kw in link_text for kw in ["apply", "official", "registration", "online", "click here", "notification", "download"]):
-                    official_link = href
-                    break
-                    
-        if not official_link:
-            for a in soup.find_all('a', href=True):
-                href = a['href'].strip()
-                if href.startswith("http") and "fastjobsearchers" not in href:
                     official_link = href
                     break
 
     except Exception as e:
-        print(f"Detail extraction error: {e}")
+        print(f"Extraction error: {e}")
         
+    # Official link na milne par aapka WhatsApp Channel link
     if not official_link:
         official_link = WHATSAPP_LINK
 
     return official_link, img_url, details
 
 def watermark_original_banner(img_url):
-    """
-    Downloads original banner from website and overlays logo.png (Rojgar Update).
-    """
     output_path = "final_banner.png"
     logo_path = "logo.png"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -102,7 +93,7 @@ def watermark_original_banner(img_url):
             if resp.status_code == 200 and len(resp.content) > 1000:
                 img = Image.open(BytesIO(resp.content)).convert("RGBA")
                 
-                # Overlay logo.png on top-right corner
+                # Watermark / Logo Overlay
                 if os.path.exists(logo_path):
                     logo = Image.open(logo_path).convert("RGBA")
                     logo.thumbnail((int(img.width * 0.22), int(img.height * 0.22)))
@@ -112,7 +103,7 @@ def watermark_original_banner(img_url):
                 img.convert("RGB").save(output_path)
                 return output_path
     except Exception as e:
-        print(f"Watermark processing error: {e}")
+        print(f"Watermark error: {e}")
         
     return None
 
@@ -122,8 +113,8 @@ def send_telegram_post(image_path, title, final_link, details):
         f"📅 <b>Important Dates:</b> {details['dates']}\n"
         f"💰 <b>Application Fee:</b> {details['fee']}\n"
         f"🔢 <b>Total Vacancy:</b> {details['vacancy']}\n\n"
-        f"📌 <b>Telegram:</b> @officialrojgarupdate\n\n"
-        f"📲 <b>Official Apply & Details Link:</b> 👇\n"
+        f"📌 <b>Telegram:</b> {TELEGRAM_USERNAME}\n\n"
+        f"📲 <b>Official Notification / Apply Link:</b> 👇\n"
         f"🔗 <a href='{final_link}'>Click Here To Apply / Details</a>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"💚 <b>Join Our WhatsApp Channel for Daily Updates:</b>\n"
@@ -139,15 +130,16 @@ def send_telegram_post(image_path, title, final_link, details):
                 "caption": caption_text,
                 "parse_mode": "HTML"
             }, files={"photo": photo})
-            print(f"Photo Post Status Code: {resp.status_code}")
+            print(f"Photo Post Status: {resp.status_code}")
     else:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         resp = requests.post(url, data={
             "chat_id": CHANNEL_ID,
             "text": caption_text,
-            "parse_mode": "HTML"
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
         })
-        print(f"Text Post Status Code: {resp.status_code}")
+        print(f"Text Post Status: {resp.status_code}")
 
 def scrape_and_post():
     url = "https://www.fastjobsearchers.com/"
@@ -156,7 +148,8 @@ def scrape_and_post():
     
     ignored_titles = [
         "home", "current job", "latest job", "result", "admit card", 
-        "answer key", "syllabus", "view all", "contact us", "privacy policy"
+        "answer key", "syllabus", "view all", "contact us", "privacy policy",
+        "chhattisgarh", "bihar", "up", "jharkhand", "delhi", "rajasthan"
     ]
     
     try:
@@ -169,7 +162,7 @@ def scrape_and_post():
             raw_title = a.text.strip()
             job_page_link = a['href'].strip()
 
-            if len(raw_title) > 10 and ("fastjobsearchers.com" in job_page_link or job_page_link.startswith("/") or ".php" in job_page_link):
+            if len(raw_title) > 12 and ("fastjobsearchers.com" in job_page_link or job_page_link.startswith("/") or ".php" in job_page_link):
                 if not job_page_link.startswith("http"):
                     job_page_link = "https://www.fastjobsearchers.com/" + job_page_link.lstrip("/")
                 
@@ -182,7 +175,7 @@ def scrape_and_post():
                     continue
                 
                 print(f"Processing Post: {clean_title}")
-                final_link, img_url, details = get_job_full_details(job_page_link)
+                final_link, img_url, details = get_clean_job_details(job_page_link)
                 
                 banner_file = watermark_original_banner(img_url)
                 send_telegram_post(banner_file, clean_title, final_link, details)
