@@ -1,28 +1,48 @@
-name: Auto Post Result Bharat
+name: Auto Post FastJobSearchers
 
 on:
   schedule:
+    # Har 15 minute me automatic chalega
     - cron: '*/15 * * * *'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y poppler-utils
+
       - name: Install Python Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install requests bs4 Pillow pdf2image
-      - name: Run Scraper
+
+      - name: Run Scraper Script
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python main.py
+
+      - name: Save & Push Posted URLs History
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted_urls.txt || true
+          git commit -m "Update posted_urls history [skip ci]" || true
+          git push || true
