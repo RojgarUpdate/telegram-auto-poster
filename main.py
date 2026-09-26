@@ -2,7 +2,7 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -30,6 +30,41 @@ def get_official_or_fallback_link(page_url):
         
     return WHATSAPP_LINK
 
+def create_branded_banner(title):
+    width, height = 1280, 720
+    
+    # Load template image
+    if os.path.exists("job_template.png"):
+        img = Image.open("job_template.png").convert("RGB").resize((width, height))
+    else:
+        img = Image.new("RGB", (width, height), color="#092B5A")
+        
+    draw = ImageDraw.Draw(img)
+    
+    # Fonts
+    try:
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+    except:
+        font_title = font_body = ImageFont.load_default()
+
+    # Title Alignment (Top Right Header)
+    display_title = title[:40] + "..." if len(title) > 40 else title
+    draw.text((450, 48), display_title.upper(), fill="#092B5A", font=font_title)
+    
+    # Template Boxes Text Placement (X, Y Coordinates)
+    draw.text((560, 205), "LATEST VACANCY", fill="#092B5A", font=font_body)
+    draw.text((560, 260), "CHECK NOTIFICATION", fill="#092B5A", font=font_body)
+    
+    draw.text((540, 415), "VARIOUS POSTS", fill="#092B5A", font=font_body)
+    draw.text((540, 495), "UPDATED TODAY", fill="#092B5A", font=font_body)
+    draw.text((540, 575), "CHECK DETAILS BELOW", fill="#092B5A", font=font_body)
+    draw.text((540, 655), "OFFICIAL WEBSITE", fill="#092B5A", font=font_body)
+
+    output_path = "final_post.png"
+    img.save(output_path)
+    return output_path
+
 def send_telegram_photo(image_path, title, final_link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     caption_text = (
@@ -51,38 +86,9 @@ def send_telegram_photo(image_path, title, final_link):
         }, files={"photo": photo})
         print(f"Telegram API Response Status: {resp.status_code}")
 
-def create_ctr_banner(title):
-    template_w, template_h = 1080, 720
-    img = Image.new("RGB", (template_w, template_h), color="#0F172A")
-    draw = ImageDraw.Draw(img)
-
-    draw.rectangle([0, 0, template_w, 100], fill="#1E293B")
-    draw.text((50, 35), "ROJGAR UPDATE (OFFICIAL)", fill="#38BDF8")
-
-    draw.rectangle([60, 150, 1020, 520], fill="#1E293B", outline="#38BDF8", width=3)
-    display_title = title[:60] + "..." if len(title) > 60 else title
-    
-    draw.rectangle([60, 150, 410, 210], fill="#DC2626")
-    draw.text((80, 168), "URGENT JOB UPDATE", fill="#FFFFFF")
-
-    draw.text((100, 260), "VACANCY / NOTICE DETAILS:", fill="#F59E0B")
-    draw.text((100, 330), display_title, fill="#FFFFFF")
-
-    draw.rectangle([60, 550, 500, 650], fill="#0284C7")
-    draw.text((120, 585), "✅ VIEW DETAILS", fill="#FFFFFF")
-    
-    draw.rectangle([580, 550, 1020, 650], fill="#166534")
-    draw.text((640, 585), "💻 APPLY NOW", fill="#FFFFFF")
-    
-    draw.text((430, 685), "@officialrojgarupdate", fill="#FFFFFF")
-
-    output_path = "final_post.png"
-    img.save(output_path)
-    return output_path
-
 def scrape_and_post():
     url = "https://www.resultbharat.com/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -96,7 +102,6 @@ def scrape_and_post():
                 if not rb_page_link.startswith("http"):
                     rb_page_link = "https://www.resultbharat.com/" + rb_page_link
                 
-                # Filter unwanted main index pages
                 if "resultbharat.com/index" in rb_page_link or rb_page_link == "https://www.resultbharat.com/":
                     continue
                 
@@ -104,9 +109,8 @@ def scrape_and_post():
                 if not title:
                     continue
                 
-                print(f"Processing Post: {title}")
                 final_link = get_official_or_fallback_link(rb_page_link)
-                banner_file = create_ctr_banner(title)
+                banner_file = create_branded_banner(title)
                 send_telegram_photo(banner_file, title, final_link)
                 break
                 
