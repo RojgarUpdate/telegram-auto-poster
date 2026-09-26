@@ -1,57 +1,68 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-def send_telegram_photo(image_path, caption, link):
+def clean_title(title):
+    # Remove Result Bharat name and unwanted domain mentions
+    cleaned = re.sub(r'(?i)result\s*bharat|\.com|official|archives', '', title)
+    cleaned = re.sub(r'[\s|:-]+$', '', cleaned.strip())
+    return cleaned if len(cleaned) > 5 else title
+
+def create_custom_banner(title):
+    width, height = 1200, 675
+    
+    # Template load ya fir custom branded background
+    if os.path.exists("job_template.png"):
+        img = Image.open("job_template.png").resize((width, height))
+    else:
+        # Dark Professional Theme
+        img = Image.new("RGB", (width, height), color="#0F172A")
+        draw_temp = ImageDraw.Draw(img)
+        # Header Box
+        draw_temp.rectangle([0, 0, width, 100], fill="#1E293B")
+        draw_temp.text((50, 30), "ROJGAR UPDATE OFFICIAL", fill="#38BDF8")
+
+    draw = ImageDraw.Draw(img)
+    
+    # Content Card Box
+    draw.rectangle([60, 150, 1140, 525], fill="#1E293B", outline="#38BDF8", width=3)
+    
+    # Clean Title Text
+    display_title = title[:60] + "..." if len(title) > 60 else title
+    draw.text((100, 280), "NEW VACANCY / UPDATE", fill="#F59E0B")
+    draw.text((100, 340), display_title, fill="#FFFFFF")
+    
+    # Footer Branding
+    draw.rectangle([0, 585, width, height], fill="#0284C7")
+    draw.text((400, 615), "Telegram: @officialrojgarupdate", fill="#FFFFFF")
+    
+    output_path = "final_post.png"
+    img.save(output_path)
+    return output_path
+
+def send_telegram_photo(image_path, title, link):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    caption_text = f"📢 <b>{caption}</b>\n\n🔗 <a href='{link}'>Click Here for Details</a>"
+    
+    # Custom Clean Caption without Result Bharat mention
+    caption = (
+        f"🚨 <b>{title}</b>\n\n"
+        f"📌 <b>Channel:</b> @officialrojgarupdate\n"
+        f"📲 Complete Details & Apply Link 👇\n\n"
+        f"🔗 <a href='{link}'>Click Here To Apply / Read Notification</a>"
+    )
     
     with open(image_path, 'rb') as photo:
         resp = requests.post(url, data={
             "chat_id": CHANNEL_ID,
-            "caption": caption_text,
+            "caption": caption,
             "parse_mode": "HTML"
         }, files={"photo": photo})
-        print("Telegram Photo API Response:", resp.status_code)
-
-def send_telegram_text(caption, link):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    text = f"📢 <b>{caption}</b>\n\n🔗 <a href='{link}'>Click Here for Details</a>"
-    resp = requests.post(url, json={
-        "chat_id": CHANNEL_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    })
-    print("Telegram Text API Response:", resp.status_code)
-
-def generate_and_post(title, link):
-    posted_with_image = False
-    
-    # Check if image template exists in repository
-    if os.path.exists("job_template.png"):
-        try:
-            img = Image.open("job_template.png").resize((1080, 600))
-            draw = ImageDraw.Draw(img)
-            
-            # Draw Title text box on template
-            draw.rectangle([50, 200, 1030, 400], fill="#FFFFFF")
-            draw.text((70, 280), title[:50], fill="#000000")
-            
-            output_path = "final_banner.png"
-            img.save(output_path)
-            
-            send_telegram_photo(output_path, title, link)
-            posted_with_image = True
-        except Exception as e:
-            print(f"Image creation error: {e}")
-
-    # Fallback to text post if image failed or template missing
-    if not posted_with_image:
-        send_telegram_text(title, link)
+        print("Telegram API Response Status:", resp.status_code)
 
 def scrape_and_post():
     url = "https://www.resultbharat.com/"
@@ -62,14 +73,20 @@ def scrape_and_post():
         soup = BeautifulSoup(resp.text, 'html.parser')
         
         for a in soup.find_all('a', href=True):
-            title = a.text.strip()
+            raw_title = a.text.strip()
             link = a['href']
             
-            if len(title) > 12 and ("http" in link or ".html" in link or "pdf" in link.lower()):
+            if len(raw_title) > 12 and ("http" in link or ".html" in link or "pdf" in link.lower()):
                 if not link.startswith("http"):
                     link = "https://www.resultbharat.com/" + link
                 
-                generate_and_post(title, link)
+                # Filter out direct main site link
+                if "resultbharat.com/index" in link or link == "https://www.resultbharat.com/":
+                    continue
+                
+                title = clean_title(raw_title)
+                banner_file = create_custom_banner(title)
+                send_telegram_photo(banner_file, title, link)
                 break
     except Exception as e:
         print(f"Scraper error: {e}")
